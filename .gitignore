@@ -9,3 +9,12 @@ tailwindcss# local builds
 # binaries
 /traininglog
 /tailwindcss
+
+# build outputs
+web/static/dist/
+/traininglog
+/tailwindcss
+build/
+.release/
+*.tar.gz
+*.tgz
