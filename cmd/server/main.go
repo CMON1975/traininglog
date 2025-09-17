@@ -751,11 +751,11 @@ ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
 	})
 
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              "127.0.0.1:8082", // bind to loopback only for reverse proxy
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Println("listening on http://127.0.0.1:8080")
+	log.Println("listening on http://127.0.0.1:8082")
 	log.Fatal(srv.ListenAndServe())
 }
 
