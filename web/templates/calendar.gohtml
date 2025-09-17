@@ -15,12 +15,22 @@
 
   <div class="grid grid-cols-7 gap-1">
     {{ range .Cells }}
-      <div class="aspect-square p-2 rounded
+      <div class="aspect-square p-2 rounded relative
                   {{ if not .InMonth }}opacity-40{{ end }}
-                  {{ if .Completed }}bg-green-800/60 border border-green-700{{ else }}bg-neutral-900 border border-neutral-800{{ end }}">
+                  {{ if .Completed }}bg-green-700 border border-green-600{{ else }}bg-neutral-900 border border-neutral-800{{ end }}">
         <div class="text-sm">{{ .Date.Day }}</div>
+        {{ if .Completed }}
+          <div class="absolute bottom-1 right-1 text-[10px] leading-none px-1 rounded bg-black/40">
+            {{ .Count }}
+          </div>
+        {{ end }}
       </div>
     {{ end }}
+  </div>
+
+  <div class="text-xs text-neutral-400">
+    <span class="inline-block w-3 h-3 align-middle rounded bg-green-700 border border-green-600"></span>
+    <span class="ml-1 align-middle">completed</span>
   </div>
 </div>
 {{ end }}
