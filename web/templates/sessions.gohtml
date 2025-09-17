@@ -1,0 +1,27 @@
+{{ define "content" }}
+<h1 class="text-2xl font-bold mb-4">Sessions</h1>
+<table class="w-full text-sm border-separate border-spacing-y-1">
+  <thead class="text-neutral-400">
+    <tr>
+      <th class="text-left px-2">ID</th>
+      <th class="text-left px-2">Date</th>
+      <th class="text-left px-2">Day</th>
+      <th class="text-left px-2">Completed</th>
+      <th class="text-left px-2"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{ range .Rows }}
+      <tr class="bg-neutral-900">
+        <td class="px-2 py-1">{{ .ID }}</td>
+        <td class="px-2 py-1">{{ .Date }}</td>
+        <td class="px-2 py-1">{{ .DayNum }}</td>
+        <td class="px-2 py-1">{{ if .Completed }}yes{{ else }}no{{ end }}</td>
+        <td class="px-2 py-1">
+          <a href="/sessions/{{ .ID }}" class="underline">view</a>
+        </td>
+      </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}

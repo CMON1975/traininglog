@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"html/template"
 	"log"
@@ -33,6 +34,22 @@ func join(nums []int) string {
 		s[i] = strconv.Itoa(v)
 	}
 	return strings.Join(s, ", ")
+}
+
+type listRow struct {
+	ID        int64
+	DayNum    int
+	Date      string
+	Completed bool
+}
+
+type checkRow struct {
+	Label   string
+	Checked bool
+}
+type setRow struct {
+	Label  string
+	Values []int
 }
 
 type DayCell struct {
@@ -426,6 +443,280 @@ func main() {
 
 		w.Header().Set("HX-Redirect", "/")
 		w.Write([]byte("Completed"))
+	})
+
+	// CSV export: one row per workout item (checks and sets). Includes workout metadata.
+	mux.HandleFunc("/export.csv", func(w http.ResponseWriter, r *http.Request) {
+		type row struct {
+			WID          int64
+			DayNum       int
+			SessionDate  *time.Time
+			BodyWeightKg *float64
+			CompletedAt  *time.Time
+			Kind         *string
+			Label        *string
+			SetIndex     *int32
+			ValueInt     *int32
+			Checked      *bool
+		}
+
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="traininglog_export.csv"`)
+
+		writer := csv.NewWriter(w)
+		defer writer.Flush()
+
+		_ = writer.Write([]string{
+			"workout_id", "day_num", "session_date", "body_weight_kg", "completed_at",
+			"kind", "label", "set_index", "value_int", "checked",
+		})
+
+		q := `
+SELECT
+  w.id,
+  w.day_num,
+  w.session_date,
+  w.body_weight_kg,
+  w.completed_at,
+  wi.kind,
+  wi.label,
+  wi.set_index,
+  wi.value_int,
+  wi.checked
+FROM workouts w
+LEFT JOIN workout_items wi ON wi.workout_id = w.id
+ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
+`
+		rows, err := pool.Query(r.Context(), q)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var rr row
+			if err := rows.Scan(
+				&rr.WID,
+				&rr.DayNum,
+				&rr.SessionDate,
+				&rr.BodyWeightKg,
+				&rr.CompletedAt,
+				&rr.Kind,
+				&rr.Label,
+				&rr.SetIndex,
+				&rr.ValueInt,
+				&rr.Checked,
+			); err != nil {
+				http.Error(w, "db scan error", http.StatusInternalServerError)
+				return
+			}
+
+			sd := ""
+			if rr.SessionDate != nil {
+				sd = rr.SessionDate.In(loadLoc()).Format("2006-01-02")
+			}
+			bw := ""
+			if rr.BodyWeightKg != nil {
+				bw = fmt.Sprintf("%.2f", *rr.BodyWeightKg)
+			}
+			ca := ""
+			if rr.CompletedAt != nil {
+				ca = rr.CompletedAt.In(loadLoc()).Format(time.RFC3339)
+			}
+			kind := ""
+			if rr.Kind != nil {
+				kind = *rr.Kind
+			}
+			label := ""
+			if rr.Label != nil {
+				label = *rr.Label
+			}
+			si := ""
+			if rr.SetIndex != nil {
+				si = strconv.Itoa(int(*rr.SetIndex))
+			}
+			vi := ""
+			if rr.ValueInt != nil {
+				vi = strconv.Itoa(int(*rr.ValueInt))
+			}
+			ch := ""
+			if rr.Checked != nil {
+				if *rr.Checked {
+					ch = "true"
+				} else {
+					ch = "false"
+				}
+			}
+
+			if err := writer.Write([]string{
+				strconv.FormatInt(rr.WID, 10),
+				strconv.Itoa(rr.DayNum),
+				sd, bw, ca,
+				kind, label, si, vi, ch,
+			}); err != nil {
+				http.Error(w, "csv write error", http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "db rows error", http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
+		loc := loadLoc()
+		rows, err := pool.Query(r.Context(), `
+	SELECT id, day_num, session_date, completed_at
+	FROM workouts
+	ORDER BY COALESCE(session_date, (completed_at AT TIME ZONE 'UTC' AT TIME ZONE $1)::date) DESC NULLS LAST, id DESC
+	LIMIT 100
+	`, loc.String())
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var out []listRow
+		for rows.Next() {
+			var id int64
+			var day int
+			var sd *time.Time
+			var ct *time.Time
+			if err := rows.Scan(&id, &day, &sd, &ct); err != nil {
+				http.Error(w, "db scan error", http.StatusInternalServerError)
+				return
+			}
+			var dstr string
+			if sd != nil {
+				dstr = sd.In(loc).Format("2006-01-02")
+			} else if ct != nil {
+				dstr = ct.In(loc).Format("2006-01-02")
+			}
+			out = append(out, listRow{
+				ID:        id,
+				DayNum:    day,
+				Date:      dstr,
+				Completed: ct != nil,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "db rows error", http.StatusInternalServerError)
+			return
+		}
+
+		t := mustTpl("web/templates/base.gohtml", "web/templates/sessions.gohtml")
+		if err := t.ExecuteTemplate(w, "base.gohtml", struct{ Rows []listRow }{Rows: out}); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		idStr := strings.TrimPrefix(r.URL.Path, "/sessions/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		loc := loadLoc()
+
+		var day int
+		var sd *time.Time
+		var bw *float64
+		var ct *time.Time
+		err = pool.QueryRow(r.Context(),
+			`SELECT day_num, session_date, body_weight_kg, completed_at FROM workouts WHERE id=$1`, id).
+			Scan(&day, &sd, &bw, &ct)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		type itemRow struct {
+			Kind     string
+			Label    string
+			SetIndex *int32
+			ValueInt *int32
+			Checked  *bool
+		}
+		rows, err := pool.Query(r.Context(), `
+	SELECT kind, label, set_index, value_int, checked
+	FROM workout_items
+	WHERE workout_id=$1
+	ORDER BY kind, label, set_index
+	`, id)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var checks []checkRow
+		tmpSets := map[string][]int{}
+		for rows.Next() {
+			var k string
+			var lbl string
+			var si *int32
+			var vi *int32
+			var ch *bool
+			if err := rows.Scan(&k, &lbl, &si, &vi, &ch); err != nil {
+				http.Error(w, "db scan error", http.StatusInternalServerError)
+				return
+			}
+			if k == "check" {
+				checked := ch != nil && *ch
+				checks = append(checks, checkRow{Label: lbl, Checked: checked})
+			} else if k == "sets" && si != nil && vi != nil {
+				tmpSets[lbl] = append(tmpSets[lbl], int(*vi))
+			}
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "db rows error", http.StatusInternalServerError)
+			return
+		}
+		var sets []setRow
+		for lbl, vals := range tmpSets {
+			sets = append(sets, setRow{Label: lbl, Values: vals})
+		}
+
+		var dateStr string
+		if sd != nil {
+			dateStr = sd.In(loc).Format("2006-01-02")
+		} else if ct != nil {
+			dateStr = ct.In(loc).Format("2006-01-02")
+		}
+		var bwStr string
+		if bw != nil {
+			bwStr = fmt.Sprintf("%.2f", *bw)
+		}
+
+		data := struct {
+			W struct {
+				ID         int64
+				DayNum     int
+				Date       string
+				Completed  bool
+				BodyWeight string
+			}
+			Checks []checkRow
+			Sets   []setRow
+		}{}
+		data.W.ID = id
+		data.W.DayNum = day
+		data.W.Date = dateStr
+		data.W.Completed = ct != nil
+		data.W.BodyWeight = bwStr
+		data.Checks = checks
+		data.Sets = sets
+
+		t := mustTpl("web/templates/base.gohtml", "web/templates/session_show.gohtml")
+		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	srv := &http.Server{
