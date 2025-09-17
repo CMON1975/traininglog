@@ -17,8 +17,15 @@
         <td class="px-2 py-1">{{ .Date }}</td>
         <td class="px-2 py-1">{{ .DayNum }}</td>
         <td class="px-2 py-1">{{ if .Completed }}yes{{ else }}no{{ end }}</td>
-        <td class="px-2 py-1">
+        <td class="px-2 py-1 flex gap-3">
           <a href="/sessions/{{ .ID }}" class="underline">view</a>
+          <button
+            hx-post="/sessions/{{ .ID }}/delete"
+            hx-target="closest tr"
+            hx-swap="outerHTML"
+            hx-confirm="Delete session #{{ .ID }} permanently?">
+            delete
+          </button>
         </td>
       </tr>
     {{ end }}

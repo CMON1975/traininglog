@@ -615,8 +615,38 @@ ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
 	})
 
 	mux.HandleFunc("/sessions/", func(w http.ResponseWriter, r *http.Request) {
-		idStr := strings.TrimPrefix(r.URL.Path, "/sessions/")
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		rem := strings.TrimPrefix(r.URL.Path, "/sessions/")
+		// delete endpoint: /sessions/{id}/delete[?redirect=1]
+		if strings.HasSuffix(rem, "/delete") {
+			idPart := strings.TrimSuffix(rem, "/delete")
+			idPart = strings.TrimSuffix(idPart, "/")
+			id, err := strconv.ParseInt(idPart, 10, 64)
+			if err != nil || id <= 0 {
+				http.NotFound(w, r)
+				return
+			}
+			tag, err := pool.Exec(r.Context(), `DELETE FROM workouts WHERE id=$1`, id)
+			if err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+			if tag.RowsAffected() != 1 {
+				http.NotFound(w, r)
+				return
+			}
+			// If called from detail view: redirect back to list. From list row: return empty to remove row via hx-swap=outerHTML.
+			if r.URL.Query().Get("redirect") == "1" {
+				w.Header().Set("HX-Redirect", "/sessions")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("Deleted"))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// detail endpoint: /sessions/{id}
+		id, err := strconv.ParseInt(rem, 10, 64)
 		if err != nil || id <= 0 {
 			http.NotFound(w, r)
 			return
@@ -635,13 +665,6 @@ ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
 			return
 		}
 
-		type itemRow struct {
-			Kind     string
-			Label    string
-			SetIndex *int32
-			ValueInt *int32
-			Checked  *bool
-		}
 		rows, err := pool.Query(r.Context(), `
 	SELECT kind, label, set_index, value_int, checked
 	FROM workout_items
@@ -654,11 +677,18 @@ ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
 		}
 		defer rows.Close()
 
+		type checkRow struct {
+			Label   string
+			Checked bool
+		}
+		type setRow struct {
+			Label  string
+			Values []int
+		}
 		var checks []checkRow
 		tmpSets := map[string][]int{}
 		for rows.Next() {
-			var k string
-			var lbl string
+			var k, lbl string
 			var si *int32
 			var vi *int32
 			var ch *bool
@@ -713,6 +743,7 @@ ORDER BY w.id DESC, wi.label NULLS LAST, wi.set_index NULLS LAST;
 		data.Sets = sets
 
 		t := mustTpl("web/templates/base.gohtml", "web/templates/session_show.gohtml")
+		t = t.Funcs(template.FuncMap{"join": join})
 		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
 			http.Error(w, "template error", http.StatusInternalServerError)
 			return
