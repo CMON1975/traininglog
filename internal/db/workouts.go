@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -15,12 +14,13 @@ func LastCompletedDay(ctx context.Context, pool *pgxpool.Pool) (int, bool, error
 		// no rows or real error: treat both as "none"
 		return 0, false, nil
 	}
+	return day, true, nil
+}
 
-	func NextDay(ctx context.Context, pool *pgxpool.Pool) int {
-		if d, ok, _ := LastCompletedDay(ctx, pool); ok {
-			n := (d % 12) + 1
-			return n
-		}
-		return 1
+func NextDay(ctx context.Context, pool *pgxpool.Pool) int {
+	if d, ok, _ := LastCompletedDay(ctx, pool); ok {
+		n := (d % 12) + 1
+		return n
 	}
+	return 1
 }
