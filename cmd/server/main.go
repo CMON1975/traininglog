@@ -240,7 +240,7 @@ func main() {
 				http.Error(w, "db error", http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprintf(w, `<input type="hidden" id="workout_id" name="workout_id" value="%d" hx-swap-oob="true">`, workoutID)
+			fmt.Fprintf(w, `<input type="hidden" id="workout_id" name="workout_id" value="%d" hx-swap-oob="outerHTML">`, workoutID)
 		}
 
 		// Persist items: for each item index present, delete existing rows for that label then insert current values
@@ -309,12 +309,17 @@ func main() {
 			return
 		}
 		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
+		if err != nil || id <= 0 {
 			http.Error(w, "bad id", http.StatusBadRequest)
 			return
 		}
-		if _, err := pool.Exec(r.Context(), `UPDATE workouts SET completed_at=now() WHERE id=$1`, id); err != nil {
+		tag, err := pool.Exec(r.Context(), `UPDATE workouts SET completed_at=now() WHERE id=$1`, id)
+		if err != nil {
 			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() != 1 {
+			http.Error(w, "no such workout", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("HX-Redirect", "/")
