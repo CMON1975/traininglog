@@ -1,4 +1,4 @@
-I was tired of using Apple notes to keep track of my physical training. 
-I wanted a low-friction web app that would better organize and report my results.
-I needed to practice my burgeoning HTMX/Tailwind/Go/PostgreSQL pipeline.
-I had to test the current state of my domain knowledge + GPT vibe-coding.
+- I was tired of using Apple notes to keep track of my physical training. 
+- I wanted a low-friction web app that would better organize and report my results.
+- I needed to practice my burgeoning HTMX/Tailwind/Go/PostgreSQL pipeline.
+- I had to test the current state of my domain knowledge + GPT vibe-coding.
