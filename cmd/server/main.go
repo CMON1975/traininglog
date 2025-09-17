@@ -208,19 +208,21 @@ func main() {
 		prev, _ := db.PrevLatestByLabels(r.Context(), pool, labels)
 
 		t := mustTpl("web/templates/base.gohtml", "web/templates/session_new.gohtml")
+		today := time.Now().In(loadLoc()).Format("2006-01-02")
 		data := struct {
 			Day       int
 			Items     []plan.Item
 			WorkoutID int64
 			Prev      map[string][]int
-		}{Day: day, Items: items, WorkoutID: 0, Prev: prev}
+			Today     string
+		}{Day: day, Items: items, WorkoutID: 0, Prev: prev, Today: today}
 		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
 			http.Error(w, "template error", http.StatusInternalServerError)
 			return
 		}
 	})
 
-	// Save draft: create workout if needed, then persist items
+	// Save draft: create workout if needed, then persist metadata and items
 	mux.HandleFunc("/session/save", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)
@@ -240,10 +242,21 @@ func main() {
 				http.Error(w, "db error", http.StatusInternalServerError)
 				return
 			}
+			// send hidden id back so subsequent posts include it
 			fmt.Fprintf(w, `<input type="hidden" id="workout_id" name="workout_id" value="%d" hx-swap-oob="outerHTML">`, workoutID)
 		}
 
-		// Persist items: for each item index present, delete existing rows for that label then insert current values
+		// Metadata after workout exists
+		if d := r.FormValue("session_date"); d != "" {
+			if t, err := time.ParseInLocation("2006-01-02", d, loadLoc()); err == nil {
+				_, _ = pool.Exec(r.Context(), `UPDATE workouts SET session_date=$2 WHERE id=$1`, workoutID, t)
+			}
+		}
+		if bw := r.FormValue("body_weight_kg"); bw != "" {
+			_, _ = pool.Exec(r.Context(), `UPDATE workouts SET body_weight_kg=$2 WHERE id=$1`, workoutID, bw)
+		}
+
+		// Persist items idempotently
 		for key := range r.PostForm {
 			if !strings.HasPrefix(key, "it_") || !strings.HasSuffix(key, "_kind") {
 				continue
@@ -252,7 +265,6 @@ func main() {
 			kind := r.PostFormValue("it_" + idx + "_kind")
 			label := r.PostFormValue("it_" + idx + "_label")
 
-			// Clear any prior rows for this workout+label to make saves idempotent
 			if _, err := pool.Exec(r.Context(), `DELETE FROM workout_items WHERE workout_id=$1 AND label=$2`, workoutID, label); err != nil {
 				http.Error(w, "db error", http.StatusInternalServerError)
 				return
@@ -261,11 +273,10 @@ func main() {
 			switch kind {
 			case "check":
 				checked := r.PostFormValue("c_"+idx) != ""
-				_, err := pool.Exec(r.Context(),
+				if _, err := pool.Exec(r.Context(),
 					`INSERT INTO workout_items(workout_id,kind,label,checked) VALUES ($1,'check',$2,$3)`,
 					workoutID, label, checked,
-				)
-				if err != nil {
+				); err != nil {
 					http.Error(w, "db error", http.StatusInternalServerError)
 					return
 				}
@@ -281,11 +292,10 @@ func main() {
 						http.Error(w, "bad number", http.StatusBadRequest)
 						return
 					}
-					_, err = pool.Exec(r.Context(),
+					if _, err := pool.Exec(r.Context(),
 						`INSERT INTO workout_items(workout_id,kind,label,set_index,value_int) VALUES ($1,'sets',$2,$3,$4)`,
 						workoutID, label, s, v,
-					)
-					if err != nil {
+					); err != nil {
 						http.Error(w, "db error", http.StatusInternalServerError)
 						return
 					}
@@ -303,25 +313,104 @@ func main() {
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
-		idStr := r.FormValue("workout_id")
-		if idStr == "" {
-			http.Error(w, "no workout id", http.StatusBadRequest)
-			return
-		}
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || id <= 0 {
-			http.Error(w, "bad id", http.StatusBadRequest)
-			return
-		}
-		tag, err := pool.Exec(r.Context(), `UPDATE workouts SET completed_at=now() WHERE id=$1`, id)
+
+		ctx := r.Context()
+		tx, err := pool.Begin(ctx)
 		if err != nil {
 			http.Error(w, "db error", http.StatusInternalServerError)
 			return
 		}
-		if tag.RowsAffected() != 1 {
-			http.Error(w, "no such workout", http.StatusNotFound)
+		defer tx.Rollback(ctx)
+
+		// ensure workout exists
+		var workoutID int64
+		if idStr := r.FormValue("workout_id"); idStr != "" {
+			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+				workoutID = id
+			}
+		}
+		if workoutID == 0 {
+			day, _ := strconv.Atoi(r.FormValue("day"))
+			if err := tx.QueryRow(ctx, `INSERT INTO workouts(day_num) VALUES ($1) RETURNING id`, day).Scan(&workoutID); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// metadata (date, body weight)
+		if d := r.FormValue("session_date"); d != "" {
+			if t, err := time.ParseInLocation("2006-01-02", d, loadLoc()); err == nil {
+				if _, err := tx.Exec(ctx, `UPDATE workouts SET session_date=$2 WHERE id=$1`, workoutID, t); err != nil {
+					http.Error(w, "db error", http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+		if bw := r.FormValue("body_weight_kg"); bw != "" {
+			if _, err := tx.Exec(ctx, `UPDATE workouts SET body_weight_kg=$2 WHERE id=$1`, workoutID, bw); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// persist items idempotently (same logic as save)
+		for key := range r.PostForm {
+			if !strings.HasPrefix(key, "it_") || !strings.HasSuffix(key, "_kind") {
+				continue
+			}
+			idx := strings.TrimSuffix(strings.TrimPrefix(key, "it_"), "_kind")
+			kind := r.PostFormValue("it_" + idx + "_kind")
+			label := r.PostFormValue("it_" + idx + "_label")
+
+			if _, err := tx.Exec(ctx, `DELETE FROM workout_items WHERE workout_id=$1 AND label=$2`, workoutID, label); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+
+			switch kind {
+			case "check":
+				checked := r.PostFormValue("c_"+idx) != ""
+				if _, err := tx.Exec(ctx,
+					`INSERT INTO workout_items(workout_id,kind,label,checked) VALUES ($1,'check',$2,$3)`,
+					workoutID, label, checked,
+				); err != nil {
+					http.Error(w, "db error", http.StatusInternalServerError)
+					return
+				}
+			case "sets":
+				sets, _ := strconv.Atoi(r.PostFormValue("it_" + idx + "_sets"))
+				for s := 1; s <= sets; s++ {
+					vStr := r.PostFormValue(fmt.Sprintf("s_%s_%d", idx, s))
+					if vStr == "" {
+						continue
+					}
+					v, err := strconv.Atoi(vStr)
+					if err != nil {
+						http.Error(w, "bad number", http.StatusBadRequest)
+						return
+					}
+					if _, err := tx.Exec(ctx,
+						`INSERT INTO workout_items(workout_id,kind,label,set_index,value_int) VALUES ($1,'sets',$2,$3,$4)`,
+						workoutID, label, s, v,
+					); err != nil {
+						http.Error(w, "db error", http.StatusInternalServerError)
+						return
+					}
+				}
+			}
+		}
+
+		// complete
+		tag, err := tx.Exec(ctx, `UPDATE workouts SET completed_at=now() WHERE id=$1`, workoutID)
+		if err != nil || tag.RowsAffected() != 1 {
+			http.Error(w, "db error", http.StatusInternalServerError)
 			return
 		}
+		if err := tx.Commit(ctx); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+
 		w.Header().Set("HX-Redirect", "/")
 		w.Write([]byte("Completed"))
 	})

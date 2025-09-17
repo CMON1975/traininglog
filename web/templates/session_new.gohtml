@@ -2,6 +2,21 @@
 <h1 class="text-2xl font-bold mb-4">Session Day {{ .Day }}</h1>
 
 <form id="sessionForm" hx-post="/session/save" hx-target="#save_result" class="space-y-4">
+
+    <div class="grid grid-cols-2 gap-3 mb-2">
+    <label class="flex flex-col gap-1">
+        <span class="text-sm text-neutral-400">Date</span>
+        <input type="date" name="session_date"
+            class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1"
+            value="{{ .Today }}">
+    </label>
+    <label class="flex flex-col gap-1">
+        <span class="text-sm text-neutral-400">Body weight (kg)</span>
+        <input type="number" name="body_weight_kg" step="0.1" min="0"
+            class="bg-neutral-900 border border-neutral-700 rounded px-2 py-1">
+    </label>
+    </div>
+
   <input type="hidden" name="day" value="{{ .Day }}">
   <input type="hidden" id="workout_id" name="workout_id" value="{{ .WorkoutID }}">
 
