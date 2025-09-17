@@ -1,0 +1,39 @@
+{{ define "content" }}
+<h1 class="text-2xl font-bold mb-2">Session #{{ .W.ID }}</h1>
+<div class="mb-4 flex items-center gap-3">
+  <a href="/sessions" class="underline">back</a>
+  <button
+    class="px-2 py-1 rounded border border-neutral-600"
+    hx-post="/sessions/{{ .W.ID }}/delete?redirect=1"
+    hx-confirm="Delete session #{{ .W.ID }} permanently?">
+    delete
+  </button>
+</div>
+<p class="text-sm text-neutral-400 mb-4">
+  Date: {{ .W.Date }} · Day: {{ .W.DayNum }} · Completed: {{ if .W.Completed }}yes{{ else }}no{{ end }}
+  {{ if .W.BodyWeight }}· Body weight: {{ .W.BodyWeight }} kg{{ end }}
+</p>
+<h2 class="font-semibold mb-2">Checks</h2>
+<ul class="mb-4 list-disc pl-6">
+  {{ if .Checks }}
+    {{ range .Checks }}
+      <li>{{ .Label }} — {{ if .Checked }}done{{ else }}not done{{ end }}</li>
+    {{ end }}
+  {{ else }}
+    <li class="text-neutral-500">none</li>
+  {{ end }}
+</ul>
+<h2 class="font-semibold mb-2">Sets</h2>
+<div class="space-y-2">
+  {{ if .Sets }}
+    {{ range .Sets }}
+      <div>
+        <div class="font-medium">{{ .Label }}</div>
+        <div class="text-sm text-neutral-300">[{{ join .Values }}]</div>
+      </div>
+    {{ end }}
+  {{ else }}
+    <div class="text-neutral-500">none</div>
+  {{ end }}
+</div>
+{{ end }}

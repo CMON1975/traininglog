@@ -1,2 +1,20 @@
 /web/static/dist.app.css
-tailwindcss
+tailwindcss# local builds
+/build/
+/.release/
+/dist/
+/*.tar.gz
+/*.tgz
+
+# binaries
+/traininglog
+/tailwindcss
+
+# build outputs
+web/static/dist/
+/traininglog
+/tailwindcss
+build/
+.release/
+*.tar.gz
+*.tgz
