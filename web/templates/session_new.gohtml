@@ -1,0 +1,35 @@
+{{ define "content" }}
+<h1 class="text-2xl font-bold mb-4">Session Day {{ .Day }}</h1>
+
+<form hx-post="/session/save" hx-target="#save_result" class="space-y-4">
+  <input type="hidden" name="day" value="{{ .Day }}">
+
+  {{ range $i, $it := .Items }}
+    {{ if eq $it.Kind "heading" }}
+      <div class="pt-2 text-sm uppercase tracking-wide text-neutral-400">{{ $it.Label }}</div>
+    {{ else if eq $it.Kind "check" }}
+      <label class="flex items-center gap-2">
+        <input type="checkbox" name="c_{{ $i }}" class="size-4 accent-neutral-200">
+        <span>{{ $it.Label }}</span>
+      </label>
+    {{ else if eq $it.Kind "sets" }}
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="min-w-48">
+          <span class="font-medium">{{ $it.Label }}</span>
+          <span class="text-neutral-400 text-sm">({{ $it.RepsMin }}–{{ $it.RepsMax }}{{ if $it.Note }} {{ $it.Note }}{{ end }})</span>
+        </div>
+        {{ range $s := (seq $it.Sets) }}
+          <input type="number" name="s_{{ $i }}_{{ $s }}" class="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-1" min="0">
+        {{ end }}
+        <span class="text-neutral-500 text-sm">(prev: —)</span>
+      </div>
+    {{ end }}
+  {{ end }}
+
+  <div id="save_result" class="text-sm text-neutral-300"></div>
+
+  <div class="pt-2">
+    <button type="submit" class="px-3 py-1.5 rounded bg-neutral-200 text-neutral-900">Save draft</button>
+  </div>
+</form>
+{{ end }}
