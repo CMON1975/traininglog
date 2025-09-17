@@ -35,6 +35,53 @@ func join(nums []int) string {
 	return strings.Join(s, ", ")
 }
 
+func loadLoc() *time.Location {
+	if loc, err := time.LoadLocation("America/Vancouver"); err == nil {
+		return loc
+	}
+	return time.Local
+}
+
+type DayCell struct {
+	Date      time.Time
+	InMonth   bool
+	Completed bool
+}
+
+func monthFromQuery(r *http.Request, loc *time.Location) (time.Time, string) {
+	ym := r.URL.Query().Get("ym") // "YYYY-MM"
+	now := time.Now().In(loc)
+	if len(ym) == 7 {
+		if t, err := time.ParseInLocation("2006-01", ym, loc); err == nil {
+			return t, ym
+		}
+	}
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc), now.Format("2006-01")
+}
+
+func monthBounds(t time.Time) (time.Time, time.Time) {
+	start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	end := start.AddDate(0, 1, 0)
+	return start, end
+}
+
+func buildCells(loc *time.Location, month time.Time, completed map[string]bool) []DayCell {
+	startOfMonth := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, loc)
+	weekday := int(startOfMonth.Weekday()) // 0=Sun
+	gridStart := startOfMonth.AddDate(0, 0, -weekday)
+	cells := make([]DayCell, 42) // 6 weeks
+	for i := 0; i < 42; i++ {
+		d := gridStart.AddDate(0, 0, i)
+		key := d.Format("2006-01-02")
+		cells[i] = DayCell{
+			Date:      d,
+			InMonth:   d.Month() == month.Month(),
+			Completed: completed[key],
+		}
+	}
+	return cells
+}
+
 func main() {
 	if os.Getenv("DATABASE_URL") == "" {
 		log.Fatal("DATABASE_URL not set")
@@ -69,6 +116,77 @@ func main() {
 		}{
 			DBStatus: dbStatus,
 			NextDay:  db.NextDay(r.Context(), pool),
+		}
+		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/calendar", func(w http.ResponseWriter, r *http.Request) {
+		loc := loadLoc()
+		month, _ := monthFromQuery(r, loc)
+		startLocal, endLocal := monthBounds(month)
+
+		// query range in UTC to match timestamptz
+		startUTC := startLocal.UTC()
+		endUTC := endLocal.UTC()
+
+		rows, err := pool.Query(r.Context(),
+			`SELECT completed_at FROM workouts
+			 WHERE completed_at IS NOT NULL
+			   AND completed_at >= $1 AND completed_at < $2`,
+			startUTC, endUTC)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		completed := map[string]bool{}
+		for rows.Next() {
+			var ts time.Time
+			if err := rows.Scan(&ts); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+			key := ts.In(loc).Format("2006-01-02")
+			completed[key] = true
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+
+		prev := month.AddDate(0, -1, 0).Format("2006-01")
+		next := month.AddDate(0, 1, 0).Format("2006-01")
+		title := month.Format("January 2006")
+
+		data := struct {
+			Title  string
+			PrevYM string
+			NextYM string
+			Cells  []DayCell
+		}{
+			Title:  title,
+			PrevYM: prev,
+			NextYM: next,
+			Cells:  buildCells(loc, month, completed),
+		}
+
+		// full page or HTMX swap target
+		files := []string{
+			filepath.FromSlash("web/templates/base.gohtml"),
+			filepath.FromSlash("web/templates/calendar.gohtml"),
+		}
+		t := mustTpl(files...)
+		if r.Header.Get("HX-Request") == "true" {
+			// return only the calendar div for HTMX
+			if err := t.ExecuteTemplate(w, "calendar.gohtml", data); err != nil {
+				http.Error(w, "template error", http.StatusInternalServerError)
+				return
+			}
+			return
 		}
 		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
 			http.Error(w, "template error", http.StatusInternalServerError)
