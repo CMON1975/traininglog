@@ -24,6 +24,17 @@ func seq(n int) []int {
 	return s
 }
 
+func join(nums []int) string {
+	if len(nums) == 0 {
+		return ""
+	}
+	s := make([]string, len(nums))
+	for i, v := range nums {
+		s[i] = strconv.Itoa(v)
+	}
+	return strings.Join(s, ", ")
+}
+
 func main() {
 	if os.Getenv("DATABASE_URL") == "" {
 		log.Fatal("DATABASE_URL not set")
@@ -68,13 +79,23 @@ func main() {
 	mux.HandleFunc("/session/new", func(w http.ResponseWriter, r *http.Request) {
 		day := db.NextDay(r.Context(), pool)
 		items := plan.Day(day)
+
+		// collect labels that have sets
+		var labels []string
+		for _, it := range items {
+			if it.Kind == "sets" {
+				labels = append(labels, it.Label)
+			}
+		}
+		prev, _ := db.PrevLatestByLabels(r.Context(), pool, labels)
+
 		t := mustTpl("web/templates/base.gohtml", "web/templates/session_new.gohtml")
-		t = t.Funcs(template.FuncMap{"seq": seq})
 		data := struct {
 			Day       int
 			Items     []plan.Item
 			WorkoutID int64
-		}{Day: day, Items: items, WorkoutID: 0}
+			Prev      map[string][]int
+		}{Day: day, Items: items, WorkoutID: 0, Prev: prev}
 		if err := t.ExecuteTemplate(w, "base.gohtml", data); err != nil {
 			http.Error(w, "template error", http.StatusInternalServerError)
 			return
@@ -193,6 +214,6 @@ func main() {
 
 func mustTpl(files ...string) *template.Template {
 	t := template.New(filepath.Base(files[0]))
-	t = t.Funcs(template.FuncMap{"seq": seq})
+	t = t.Funcs(template.FuncMap{"seq": seq, "join": join})
 	return template.Must(t.ParseFiles(files...))
 }

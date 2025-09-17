@@ -28,7 +28,11 @@
         {{ range $s := (seq $it.Sets) }}
           <input type="number" name="s_{{ $i }}_{{ $s }}" class="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-1" min="0">
         {{ end }}
+        {{ with (index $.Prev $it.Label) }}
+        <span class="text-neutral-500 text-sm">(prev: {{ join . }})</span>
+        {{ else }}
         <span class="text-neutral-500 text-sm">(prev: —)</span>
+        {{ end }}
       </div>
     {{ end }}
   {{ end }}
